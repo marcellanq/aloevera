@@ -1,0 +1,163 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations and shared functions.
+ */
+
+/**
+ * Implements hook_payment_method_controller_info().
+ */
+function paymentmethodbasic_payment_method_controller_info() {
+  return array('PaymentMethodBasicController');
+}
+
+/**
+ * Implements hook_entity_load().
+ */
+function paymentmethodbasic_entity_load(array $entities, $entity_type) {
+if ($entity_type == 'payment_method') {
+    $pmids = array();
+    foreach ($entities as $payment_method) {
+      if ($payment_method->controller->name == 'PaymentMethodBasicController') {
+        $pmids[] = $payment_method->pmid;
+      }
+    }
+    if ($pmids) {
+      $query = db_select('paymentmethodbasic')
+        ->fields('paymentmethodbasic')
+        ->condition('pmid', $pmids);
+      $result = $query->execute();
+      while ($data = $result->fetchAssoc()) {
+        $payment_method = $entities[$data['pmid']];
+        foreach ($data as $property => $value) {
+          $payment_method->controller_data[$property] = $value;
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_ACTION().
+ */
+function paymentmethodbasic_payment_method_insert(PaymentMethod $payment_method) {
+  if ($payment_method->controller->name == 'PaymentMethodBasicController') {
+    $payment_method->controller_data += paymentmethodbasic_controller_data();
+    $query = db_insert('paymentmethodbasic');
+    $values = array_merge($payment_method->controller_data, array(
+      'pmid' => $payment_method->pmid,
+    ));
+    $query->fields($values);
+    $query->execute();
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_ACTION().
+ */
+function paymentmethodbasic_payment_method_update(PaymentMethod $payment_method) {
+  if ($payment_method->controller->name == 'PaymentMethodBasicController') {
+    $query = db_update('paymentmethodbasic');
+    $values = array_merge($payment_method->controller_data, array(
+      'pmid' => $payment_method->pmid,
+    ));
+    $query->fields($values);
+    $query->condition('pmid', $payment_method->pmid);
+    $query->execute();
+  }
+}
+
+/**
+ * Implements hook_ENTITY_TYPE_ACTION().
+ */
+function paymentmethodbasic_payment_method_delete($entity) {
+  if ($entity->controller->name == 'PaymentMethodBasicController') {
+    db_delete('paymentmethodbasic')
+      ->condition('pmid', $entity->pmid)
+      ->execute();
+  }
+}
+
+/**
+ * Return all payment method-specific property names.
+ */
+function paymentmethodbasic_controller_data() {
+  return array(
+    'message' => '',
+    'text_format' => '',
+  );
+}
+
+/**
+ * A basic payment method controller.
+ *
+ * This controller always executes payments successfully, does not require
+ * payment-specific information and does not transfer any money. It can be
+ * useful to create a "collect on delivery" payment method, for instance.
+ */
+class PaymentMethodBasicController extends PaymentMethodController {
+
+  public $payment_method_form_id = 'paymentmethodbasic_form_payment_method';
+
+  public $payment_form_elements_callback = 'paymentmethodbasic_payment_form_elements';
+
+  function __construct() {
+    $this->title = t('Basic');
+    $this->description = t("A 'dumb' payment method type that always successfully executes payments, but never actually transfers money. It can be useful for <em>collect on delivery</em>, for instance.");
+  }
+
+  /**
+   * Implements PaymentMethodController::execute().
+   */
+  function execute(Payment $payment) {
+    $payment->setStatus(new PaymentStatusItem(PAYMENT_STATUS_SUCCESS));
+  }
+
+  /**
+   * Implements PaymentMethodController::validate().
+   */
+  function validate(Payment $payment) {
+    return TRUE;
+  }
+}
+
+/**
+ * Form build callback: implements PaymentMethodController payment method form.
+ *
+ * @return array
+ *   A Drupal form.
+ */
+function paymentmethodbasic_form_payment_method(array $form, array &$form_state) {
+  $controller_data = $form_state['payment_method']->controller_data;
+
+  $form['message'] = array(
+    '#type' => 'text_format',
+    '#title' => t('Payment form message'),
+    '#default_value' => isset($controller_data['message']) ? $controller_data['message'] : '',
+    '#format' => isset($controller_data['text_format']) ? $controller_data['text_format'] : NULL,
+  );
+
+  return $form;
+}
+
+/**
+ * Implements form submit callback for paymentmethodbasic_form_payment_method().
+ */
+function paymentmethodbasic_form_payment_method_submit(array $form, array &$form_state) {
+  $form_state['payment_method']->controller_data['message'] = $form_state['values']['message']['value'];
+  $form_state['payment_method']->controller_data['text_format'] = $form_state['values']['message']['format'];
+}
+
+/**
+ * Implements PaymentMethodController payment_form_elements_callback.
+ */
+function paymentmethodbasic_payment_form_elements(PaymentMethod $payment_method) {
+  $elements = array();
+  $elements['message'] = array(
+    '#type' => 'markup',
+    '#markup' => check_markup($payment_method->controller_data['message'], $payment_method->controller_data['text_format']),
+  );
+
+  return $elements;
+}

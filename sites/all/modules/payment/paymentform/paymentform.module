@@ -1,0 +1,290 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations and shared functions.
+ */
+
+/**
+ * Implements hook_menu().
+ */
+function paymentform_menu() {
+  $items['paymentform'] = array(
+    'title' => 'Payment form',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('paymentform_form'),
+    'access arguments' => array('paymentform.page.access'),
+  );
+  $items['admin/config/services/paymentform'] = array(
+    'title' => 'Payment Form',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('paymentform_form_configuration'),
+    'access arguments' => array('paymentform.administer'),
+  );
+  $items['admin/config/services/paymentform/configure'] = array(
+    'title' => 'Configure Payment Form',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'context' => MENU_CONTEXT_INLINE,
+  );
+
+  return $items;
+}
+
+/**
+ * Implements hook_element_info().
+ */
+function paymentform_element_info() {
+  $elements['paymentform_amount'] = array(
+    '#input' => TRUE,
+    '#process' => array('paymentform_form_process_amount'),
+    // The payment amount as a float.
+    '#amount' => 0,
+    // The minimum payment amount as a float that needs to be entered.
+    '#minimum_amount' => 0,
+    // The ISO 4217 currency code.
+    '#currency_code' => 'XXX',
+  );
+
+  return $elements;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function paymentform_permission() {
+  return array(
+    'paymentform.administer' => array(
+      'title' => t('Administer Payment Form'),
+    ),
+    'paymentform.page.access' => array(
+      'title' => t('Access the <a href="@url">payment form page</a>', array(
+        '@url' => url('paymentform'),
+      )),
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function paymentform_block_info() {
+  $blocks['paymentform'] = array(
+    'info' => t('Payment Form'),
+  );
+
+  return $blocks;
+}
+
+function paymentform_block_view($delta = '') {
+  return array(
+    'subject' => t('Payment Form'),
+    'content' => drupal_get_form('paymentform_form'),
+  );
+}
+
+/**
+ * Form build callback: render the donation form.
+ *
+ * @return array
+ *  The form build array.
+ */
+function paymentform_form(array $form, array &$form_state, Payment $payment = NULL) {
+  if (!entity_load('payment_method')) {
+    $form['#access'] = FALSE;
+    drupal_set_message(t('There are no payment methods.'), 'warning');
+  }
+  if (!variable_get('paymentform_currency_code', FALSE)) {
+    $form['#access'] = FALSE;
+    drupal_set_message(t('Payment Form has not been configured.') . ' ' . l(t('Configure Payment Form'), 'admin/config/services/paymentform') . '.', 'warning');
+  }
+
+  $form['#contextual_links']['paymentform'] = array('admin/config/services/paymentform', array());
+  $description = paymentform_description();
+  $description = check_markup($description['value'], $description['format']);
+  if (!$payment) {
+    $payment = new Payment(array(
+      'amount' => variable_get('paymentform_amount', 0),
+      'currency_code' => variable_get('paymentform_currency_code', 'XXX'),
+      'description' => strip_tags($description),
+      'finish_callback' => 'paymentform_payment_finish',
+      'caller_data' => array(
+        'location' => $_GET['q'],
+      ),
+    ));
+  }
+
+  $form['description'] = array(
+    '#markup' => $description,
+  );
+  $form['amount'] = array(
+    '#type' => 'paymentform_amount',
+    '#title' => t('Amount'),
+    '#amount' => $payment->amount,
+    '#minimum_amount' => $payment->amount,
+    '#currency_code' => $payment->currency_code,
+  );
+  $form['payment_method'] = array(
+    '#type' => 'payment_method',
+    '#title' => t('Payment method'),
+    '#payment' => $payment,
+    '#required' => TRUE,
+  );
+  $form['actions'] = array(
+    '#type' => 'actions',
+  );
+  $form['actions']['pay'] = array(
+    '#type' => 'submit',
+    '#value' => t('Pay'),
+  );
+
+  return $form;
+}
+
+/**
+ * Implements form submit callback for paymentform_form().
+ */
+function paymentform_form_submit(array $form, array &$form_state) {
+  $payment = $form_state['payment'];
+  $payment->amount = $form_state['values']['amount'];
+  $payment->execute();
+  if (payment_status_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_FAILED)) {
+    $form_state['rebuild'] = TRUE;
+  }
+}
+
+/**
+ * Implements Payment finish callback.
+ */
+function paymentform_payment_finish(Payment $payment) {
+  if (user_access('payment.view.own') || user_access('payment.view.all')) {
+    $view = ' ' . l(t('View payment'), 'payment/' . $payment->pid) . '.';
+  }
+  if (payment_status_is_or_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_PENDING)) {
+    drupal_set_message(t('Your payment is still being processed.') . $view);
+  }
+  elseif (payment_status_is_or_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_SUCCESS)) {
+    drupal_set_message(t('Your payment was successfully completed.') . $view);
+  }
+  elseif (payment_status_is_or_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_FAILED)) {
+    drupal_set_message(t('Your payment failed.') . $view);
+  }
+
+  // Make sure the user ends up where he came from.
+  if ($_GET['q'] != $payment->caller_data['location']) {
+    drupal_goto($payment->caller_data['location']);
+  }
+}
+
+/**
+ * Implements form build callback: the global configuration form.
+ */
+function paymentform_form_configuration(array $form, array &$form_state) {
+  $form['paymentform_amount'] = array(
+    '#type' => 'paymentform_amount',
+    '#title' => t('Minimum amount'),
+    '#default_value' => payment_amount_human_readable(variable_get('paymentform_amount', 0)),
+    '#editable' => TRUE,
+  );
+  $form['paymentform_currency_code'] = array(
+    '#type' => 'select',
+    '#title' => t('Currency'),
+    '#options' => currency_api_get_list(),
+    '#default_value' => variable_get('paymentform_currency_code', NULL),
+    '#required' => TRUE,
+  );
+  $description = paymentform_description();
+  $form['paymentform_description'] = array(
+    '#type' => 'text_format',
+    '#title' => t('Description'),
+    '#default_value' => $description['value'],
+    '#format' => $description['format'],
+  );
+
+  return system_settings_form($form);
+}
+
+/**
+ * Return the payment description.
+ *
+ * @return string
+ */
+function paymentform_description() {
+  return variable_get('paymentform_description', array(
+    'value' => t('Make a payment to @site_name.', array(
+      '@site_name' => variable_get('site_name', NULL),
+    )),
+    'format' => NULL,
+  ));
+}
+
+/**
+ * Implements form process callback for a paymentform_amount element.
+ */
+function paymentform_form_process_amount(array $element) {
+  $element['#type'] = 'textfield';
+  $element['#required'] = TRUE;
+  if ($element['#amount']) {
+    $element['#default_value'] = payment_amount_human_readable($element['#amount']);
+  }
+  $description = NULL;
+  if ($element['#minimum_amount'] > 0) {
+    // @todo Add currency.
+    $description = t('The minimum amount is !amount.', array(
+      '!amount' => payment_amount_human_readable($element['#minimum_amount']),
+    ));
+  }
+  if ($element['#currency_code'] != 'XXX') {
+    $element['#field_prefix'] = $element['#currency_code'];
+  }
+  $element['#description'] = $description;
+  $element['#size'] = 16;
+  $element['#maxlength'] = 16;
+  $element += element_info('textfield');
+  // Set validate handlers.
+  $element['#element_validate'][] = 'paymentform_form_validate_amount';
+
+  return $element;
+}
+
+/**
+ * Implements form validate callback for a paymentform_amount element.
+ */
+function paymentform_form_validate_amount(array $element, array &$form_state) {
+  $value = $element['#value'];
+
+  // Count the number of decimal marks.
+  $count_fragments = count(preg_split('#[.,]#', $value));
+
+  // Check for invalid characters.
+  if (preg_match('#[^\d.,]#', $value)) {
+    form_set_error('amount', t('The amount can only consist of decimals and one decimal mark.'));
+  }
+  // Check for multiple decimal marks.
+  elseif ($count_fragments > 2) {
+    form_set_error('amount', t('The amount can only have one decimal mark.'));
+  }
+  // Make sure that if there is a decimal mark, it is followed by two digits.
+  elseif ($count_fragments == 2 && !preg_match('#[.,]\d\d$#', $value)) {
+    // @todo Implement Currency 7.x-2.x.
+    // @todo Number of digits can vary from 0 to 3.
+    form_set_error('amount', t('The decimal mark must be followed by two digits.'));
+  }
+  else {
+    // Convert the value to a float.
+    $amount = (float) $value;
+
+    // Confirm the amount lies within the allowed range.
+    $minimum_amount = max($element['#minimum_amount'], 0);
+    if ($amount < $minimum_amount) {
+      form_set_error('amount', t('The minimum amount is €!amount.', array(
+        '!amount' => payment_amount_human_readable(max($element['#minimum_amount'], 1)),
+      )));
+    }
+
+    // The value passed validation. Set the amount as a float as the value for
+    // further processing.
+    else {
+      form_set_value($element, $amount, $form_state);
+    }
+  }
+}

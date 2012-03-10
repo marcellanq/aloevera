@@ -1,0 +1,18 @@
+diff a/paymentform/paymentform.module b/paymentform/paymentform.module	(rejected hunks)
+@@ -159,13 +159,13 @@ function paymentform_payment_finish(Payment $payment) {
+   if (user_access('payment.view.own') || user_access('payment.view.all')) {
+     $view = ' ' . l(t('View payment'), 'payment/' . $payment->pid) . '.';
+   }
+-  if (payment_status_has_ancestor($payment->status, PAYMENT_STATUS_PENDING)) {
++  if (payment_status_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_PENDING)) {
+     drupal_set_message(t('Your payment is still being processed.') . $view);
+   }
+-  elseif (payment_status_has_ancestor($payment->status, PAYMENT_STATUS_SUCCESS)) {
++  elseif (payment_status_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_SUCCESS)) {
+     drupal_set_message(t('Your payment was successfully completed.') . $view);
+   }
+-  elseif (payment_status_has_ancestor($payment->status, PAYMENT_STATUS_FAILED)) {
++  elseif (payment_status_has_ancestor($payment->getStatus()->code, PAYMENT_STATUS_FAILED)) {
+     drupal_set_message(t('Your payment failed.') . $view);
+   }
+ 

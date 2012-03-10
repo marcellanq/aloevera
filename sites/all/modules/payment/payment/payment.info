@@ -1,0 +1,16 @@
+name = Payment
+description = "Allows other modules to let their users make payments using the payment methods connected to Payment."
+core = 7.x
+dependencies[] = entity
+files[] = payment.classes.inc
+files[] = views/PaymentViewsHandlerFieldPaymentMethodControllerTitle.inc
+files[] = views/PaymentViewsHandlerFieldPaymentMethodControllerDescription.inc
+files[] = views/PaymentViewsHandlerFieldPaymentMethodOperations.inc
+files[] = views/PaymentViewsHandlerFieldPaymentStatusTitle.inc
+files[] = views/PaymentViewsHandlerFieldPaymentOperations.inc
+; Information added by drupal.org packaging script on 2012-02-20
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "payment"
+datestamp = "1329697784"
+

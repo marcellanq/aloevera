@@ -1,0 +1,716 @@
+<?php
+
+/**
+ * @file
+ * Hook implementations and shared functions.
+ */
+
+/**
+ * An absolute parent status: a payment for which all money has been transferred.
+ */
+define('PAYMENT_STATUS_MONEY_TRANSFERRED', 'payment_status_money_transferred');
+
+/**
+ * An absolute parent status: a payment for which no money has been transferred.
+ */
+define('PAYMENT_STATUS_MONEY_NOT_TRANSFERRED', 'payment_status_money_not_transferred');
+
+/**
+ * An absolute parent status: a payment whose status is unknown to us.
+ */
+define('PAYMENT_STATUS_UNKNOWN', 'payment_status_unknown');
+
+/**
+ * A new payment for which processing has not yet started.
+ */
+define('PAYMENT_STATUS_NEW', 'payment_status_new');
+
+/**
+ * An open (pending) payment.
+ */
+define('PAYMENT_STATUS_PENDING', 'payment_status_pending');
+
+/**
+ * A payment for which funds have been successfully transferred.
+ */
+define('PAYMENT_STATUS_SUCCESS', 'payment_status_success');
+
+/**
+ * A failed payment, e.g. for which no funds have been transferred.
+ */
+define('PAYMENT_STATUS_FAILED', 'payment_status_failed');
+
+/**
+ * Implements hook_menu().
+ *
+ * @see payment_views_default_views()
+ */
+function payment_menu() {
+  // Payment pages.
+  $items['payment/%payment_menu_entity'] = array(
+    'load arguments' => array('payment'),
+    'title callback' => 'payment_title',
+    'title arguments' => array(1),
+    'page callback' => 'payment_page_payment_view',
+    'page arguments' => array(1),
+    'access callback' => 'payment_access',
+    'access arguments' => array(1),
+    'file' => 'payment.ui.inc',
+  );
+  $items['payment/%payment_menu_entity/view'] = array(
+    'load arguments' => array('payment'),
+    'title' => 'View',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'context' => MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE,
+    'weight' => -10,
+  );
+  
+
+  // Payment method configuration.
+  $items['admin/config/services/payment/method'] = array(
+    'title' => 'Payment methods',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    // 'weight' => 1,
+  );
+  $items['admin/config/services/payment/method/add'] = array(
+    'title' => 'Add payment method',
+    'page callback' => 'payment_page_payment_method_add_select_controller',
+    'access arguments' => array('payment.method.administer'),
+    'file' => 'payment.ui.inc',
+    'type' => MENU_LOCAL_ACTION,
+    'weight' => 1,
+  );
+  $items['admin/config/services/payment/method/add/%payment_method_controller'] = array(
+    'title' => 'Add payment method',
+    'page callback' => 'payment_method_form_add',
+    'page arguments' => array(6),
+    'access arguments' => array('payment.method.administer'),
+    'file' => 'payment.ui.inc',
+    'type' => MENU_CALLBACK,
+  );
+  $items['admin/config/services/payment/method/%payment_menu_entity'] = array(
+    'load arguments' => array('payment_method'),
+    'page callback' => 'payment_method_form',
+    'page arguments' => array(5),
+    'access arguments' => array('payment.method.administer'),
+    'title callback' => 'payment_method_title',
+    'title arguments' => array(5),
+    'file' => 'payment.ui.inc',
+  );
+  $items['admin/config/services/payment/method/%payment_menu_entity/edit'] = array(
+    'load arguments' => array('payment_method'),
+    'title' => 'Edit',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'context' => MENU_CONTEXT_INLINE,
+  );
+  $items['admin/config/services/payment/method/%payment_menu_entity/delete'] = array(
+    'load arguments' => array('payment_method'),
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('payment_form_payment_method_delete', 5),
+    'access arguments' => array('payment.method.administer'),
+    'title' => 'Delete',
+    'file' => 'payment.ui.inc',
+    'type' => MENU_LOCAL_TASK,
+    'context' => MENU_CONTEXT_INLINE,
+    'weight' => 1,
+  );
+
+  // Payment status overview.
+  $items['admin/config/services/payment/status'] = array(
+    'title' => 'Payment statuses',
+    'page callback' => 'payment_page_status',
+    'access arguments' => array('payment.status.view'),
+    'file' => 'payment.ui.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 1,
+  );
+
+  // General configuration.
+  $items['admin/config/services/payment/global'] = array(
+    'title' => 'Global configuration',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('payment_form_global_configuration'),
+    'access arguments' => array('payment.configuration.administer'),
+    'file' => 'payment.ui.inc',
+    'type' => MENU_LOCAL_TASK,
+    'weight' => 2,
+  );
+
+  // Placeholder pages in case certain dependencies have not been met.
+  $base = array(
+      'page callback' => 'payment_page_required_modules',
+      'page arguments' => array(array(
+        'views' => 'Views',
+      )),
+      'file' => 'payment.ui.inc',
+      'menu_name' => 'management',
+  );
+  if (!module_exists('views')) {
+    $items['admin/content/payment'] = array(
+      'title' => 'Payments',
+      'access arguments' => array('payment.view.all'),
+    ) + $base;
+    $items['admin/config/services/payment'] = array(
+      'title' => 'Payment',
+      'access arguments' => array('payment.method.administer'),
+    ) + $base;
+  }
+
+  return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function payment_permission() {
+  return array(
+    'payment.view.own' => array(
+      'title' => t('View own payments'),
+    ),
+    'payment.view.all' => array(
+      'title' => t('View all payments'),
+    ),
+    'payment.method.administer' => array(
+      'title' => t('Administer payment methods'),
+    ),
+    'payment.status.view' => array(
+      'title' => t('View payment status overview'),
+    ),
+    'payment.configuration.administer' => array(
+      'title' => t('Administer global Payment configuration'),
+    ),
+  );
+}
+
+/**
+ * Implements hook_forms().
+ */
+function payment_forms() {
+  $forms = array();
+  foreach (payment_method_controller_load_multiple() as $controller) {
+    $forms['payment_form_payment_method_' . $controller->payment_method_form_id] = array(
+      'callback' => $controller->payment_method_form_id,
+      'wrapper_callback' => 'payment_form_payment_method',
+    );
+  }
+
+  return $forms;
+}
+
+/**
+ * Implements hook_form_alter().
+ */
+function payment_form_alter(array &$form, array &$form_state, $form_id) {
+  // Check for payment method forms.
+  foreach (payment_method_controller_load_multiple() as $controller) {
+    if ($form_id == 'payment_form_payment_method_' . $controller->payment_method_form_id) {
+      // Add payment method form callbacks. We do this here to make sure the
+      // form provided by the payment method controller doesn't have to set
+      // anything explicitely and the wrapper callback's callbacks are the last
+      // to be executed, so it can save the entire modified payment method.
+      $form['#submit'][] = 'payment_form_payment_method_submit';
+    }
+  }
+}
+
+/**
+ * Implements hook_hook_info().
+ */
+function payment_hook_info() {
+  $hooks['payment_status_info'] = array(
+    'group' => 'payment',
+  );
+  $hooks['payment_method_controller_info'] = array(
+    'group' => 'payment',
+  );
+  $hooks['payment_status_change'] = array(
+    'group' => 'payment',
+  );
+  $hooks['payment_pre_execute'] = array(
+    'group' => 'payment',
+  );
+
+  return $hooks;
+}
+
+/**
+ * Implements hook_watchdog().
+ */
+function payment_watchdog(array $log_entry) {
+  // If debugging mode is enabled, display all Payment log entries on the screen.
+  if ($log_entry['type'] == 'Payment' && variable_get('payment_display_log_entries', TRUE)) {
+    $message = t($log_entry['message'], $log_entry['variables'] ? $log_entry['variables'] : array());
+    $help = l(t('Do not display log entries on screen'), 'admin/config/services/payment/global');
+    drupal_set_message($message . ' ' . $help . '.', 'error');
+  }
+}
+
+/**
+ * Implements hook_entity_info().
+ */
+function payment_entity_info() {
+  $entity_info['payment'] = array(
+    'label' => t('Payment'),
+    'controller class' => 'PaymentEntityController',
+    'entity class' => 'Payment',
+    'module' => 'payment',
+    'base table' => 'payment',
+    'entity keys' => array(
+      'id' => 'pid',
+      'label' => 'description',
+    ),
+    // @todo Enable static cache once http://drupal.org/node/1273756 is fixed.
+    'static cache' => FALSE,
+  );
+  $entity_info['payment_method'] = array(
+    'label' => t('Payment method'),
+    'controller class' => 'PaymentMethodEntityController',
+    'entity class' => 'PaymentMethod',
+    'module' => 'payment',
+    'base table' => 'payment_method',
+    'entity keys' => array(
+      'id' => 'pmid',
+      'label' => 'title_specific',
+    ),
+    // @todo Enable static cache once http://drupal.org/node/1273756 is fixed.
+    'static cache' => FALSE,
+  );
+
+  return $entity_info;
+}
+
+/**
+ * Implements hook_entity_property_info().
+ */
+function payment_entity_property_info() {
+  // Payment.
+  $properties['payment']['properties']['amount'] = array(
+    'label' => t('Amount'),
+    'required' => TRUE,
+    'schema field' => 'amount',
+    'type' => 'decimal',
+  );
+  $properties['payment']['properties']['currency_code'] = array(
+    'description' => t('A three-letter ISO 4217 currency code.'),
+    'label' => t('Currency code'),
+    'required' => TRUE,
+    'schema field' => 'currency_code',
+  );
+  $properties['payment']['properties']['created'] = array(
+    'label' => t('Creation date and time'),
+    'required' => TRUE,
+    'schema field' => 'created',
+    'type' => 'date',
+  );
+  $properties['payment']['properties']['description'] = array(
+    'label' => t('Description'),
+    'schema field' => 'description',
+  );
+  $properties['payment']['properties']['expired'] = array(
+    'label' => t('Expiration date and time'),
+    'schema field' => 'expired',
+    'type' => 'date',
+  );
+  $properties['payment']['properties']['finish_callback'] = array(
+    'description' => t('The name of the function to call once payment processing is completed.'),
+    'label' => t('Finish callback'),
+    'required' => TRUE,
+    'schema field' => 'finish_callback',
+  );
+  $properties['payment']['properties']['method'] = array(
+    'label' => t('Payment method'),
+    'required' => TRUE,
+    'type' => 'payment_method',
+  );
+  $properties['payment']['properties']['pid'] = array(
+    'label' => t('Payment ID'),
+    'schema field' => 'pid',
+    'type' => 'integer',
+  );
+  $properties['payment']['properties']['pmid'] = array(
+    'label' => t('Payment method ID'),
+    'schema field' => 'pmid',
+    'type' => 'integer',
+  );
+  $properties['payment']['properties']['uid'] = array(
+    'label' => 'User ID',
+    'description' => t('The ID of the user this payment belongs to.'),
+    'required' => TRUE,
+    'schema field' => 'uid',
+    'type' => 'integer',
+  );
+  $properties['payment']['properties']['updated'] = array(
+    'label' => t('Last updated date and time'),
+    'schema field' => 'updated',
+    'type' => 'date',
+  );
+
+  // Payment method.
+  $properties['payment_method']['properties']['controller_class_name'] = array(
+    'label' => t('Payment method type'),
+    'schema field' => 'controller_class_name',
+  );
+  $properties['payment_method']['properties']['pmid'] = array(
+    'label' => t('Payment method ID'),
+    'schema field' => 'pmid',
+    'type' => 'integer',
+  );
+  $properties['payment_method']['properties']['title_specific'] = array(
+    'label' => t('Title (specific)'),
+    'required' => TRUE,
+    'schema field' => 'title_specific',
+  );
+  $properties['payment_method']['properties']['title_generic'] = array(
+    'label' => t('Title (generic)'),
+    'schema field' => 'title_generic',
+  );
+
+  return $properties;
+}
+
+/**
+ * Implements hook_element_info().
+ */
+function payment_element_info() {
+  $elements['payment_method'] = array(
+    '#input' => TRUE,
+    '#process' => array('payment_form_method_process'),
+    '#element_validate' => array('payment_form_method_validate'),
+    // The Payment object to get a method for. It will end up in
+    // $form_state['payment'].
+    '#payment' => NULL,
+    // An array with IDs of the allowed payment methods. Leave empty to allow all.
+    '#pmids' => array(),
+  );
+
+  return $elements;
+}
+
+/**
+ * Implements hook_views_api().
+ */
+function payment_views_api() {
+  return array(
+    'api' => 3,
+    'path' => drupal_get_path('module', 'payment') . '/views',
+  );
+}
+
+/**
+ * Gets payment statuses.
+ *
+ * @see hook_payment_status_info()
+ *
+ * @return array
+ *   An array with PaymentStatus objects for all available statuses.
+ */
+function payment_statuses_info() {
+  static $statuses = NULL;
+
+  if (!$statuses) {
+    $statuses = array();
+    foreach (module_invoke_all('payment_status_info') as $status) {
+      $statuses[$status->code] = $status;
+    }
+    drupal_alter('payment_status_info', $statuses);
+  }
+
+  return $statuses;
+}
+
+/**
+ * Gets a specific payment status.
+ *
+ * @param $status string
+ *   A status' system name.
+ * @param $unknown boolean
+ *   Whether to return info for PAYMENT_STATUS_UNKNOWN if the requested status
+ *   does not exist.
+ *
+ * @return mixed
+ *   A PaymentStatus object or FALSE if the status does not exist.
+ */
+function payment_status_info($code, $unknown = FALSE) {
+  $statuses = payment_statuses_info();
+
+  return isset($statuses[$code]) ? $statuses[$code] : ($unknown ? $statuses[PAYMENT_STATUS_UNKNOWN] : FALSE);
+}
+
+/**
+ * Check if a payment status has a given other status as one of its ancestors.
+ *
+ * @param $code string
+ *   The payment status' code.
+ * @param $ancestor_code string
+ *   The code of the ancestor status to check for.
+ *
+ * @return boolean
+ */
+function payment_status_has_ancestor($code, $ancestor_code) {
+  return in_array($ancestor_code, payment_status_info($code, TRUE)->ancestors());
+}
+
+/**
+ * Check if a payment status is equal to a given other status or has it one of
+ * its ancestors.
+ *
+ * @param $code string
+ *   The payment status' code.
+ * @param $ancestor_code string
+ *   The code of the ancestor status to check for.
+ *
+ * @return boolean
+ */
+function payment_status_is_or_has_ancestor($code, $ancestor_code) {
+  return $code == $ancestor_code || in_array($ancestor_code, payment_status_info($code, TRUE)->ancestors());
+}
+
+/**
+ * Returns information about payment method controllers.
+ *
+ * @return array
+ *   Keys are payment method controller class aliases, values are the real
+ *   payment method controller class names. This allows
+ *   hook_payment_method_controller_info_alter() to override payment method
+ *   controllers.
+ */
+function payment_method_controllers_info() {
+  static $controllers_info = NULL;
+
+  if (!$controllers_info) {
+    $controllers_info = module_invoke_all('payment_method_controller_info');
+    foreach ($controllers_info as $controller_class_name_alias => $controller_class_name) {
+      if (is_numeric($controller_class_name_alias)) {
+        unset($controllers_info[$controller_class_name_alias]);
+        $controllers_info[$controller_class_name] = $controller_class_name;
+      }
+    }
+    drupal_alter('payment_method_controller_info', $controllers_info);
+  }
+
+  return $controllers_info;
+}
+
+/**
+ * Load a payment method controller().
+ *
+ * @param $controller_class_name string
+ *   The name of the controller class to load.
+ *
+ * @return mixed
+ *   Either a PaymentMethodController object or FALSE in case of errors.
+ */
+function payment_method_controller_load($controller_class_name) {
+  $controllers = payment_method_controller_load_multiple(array($controller_class_name));
+
+  return reset($controllers);
+}
+
+/**
+ * Load multiple payment method controllers.
+ *
+ * @param $controller_class_names array
+ *   An array with names of controller classes. Leave empty to load all
+ *   controllers.
+ *
+ * @return array
+ *   Keys are the values of $controller_class_names passed on to this function.
+ *   Every value is either a PaymentMethodController object or FALSE if the
+ *   controller could not be loaded.
+ */
+function payment_method_controller_load_multiple(array $controller_class_names = array()) {
+  static $controllers = NULL;
+
+  // Load all existing controllers.
+  if (is_null($controllers)) {
+    foreach (payment_method_controllers_info() as $controller_class_name_alias => $controller_class_name) {
+      $controller = new $controller_class_name();
+      $controller->name = $controller_class_name;
+      $controllers[$controller_class_name_alias] = $controller;
+    }
+  }
+
+  // Set FALSE for requested controllers that do not exist.
+  $controllers += array_fill_keys(array_diff($controller_class_names, array_keys($controllers)), FALSE);
+
+  return $controller_class_names ? array_intersect_key($controllers, array_flip($controller_class_names)) : array_filter($controllers);
+}
+
+/**
+ * Convert an amount as a float to a human-readable format.
+ *
+ * @param $amount float
+ * @param $currency_code string
+ *
+ * @return string
+ */
+function payment_amount_human_readable($amount, $currency_code = NULL) {
+  // @todo Use Currency 7.x-2.x (http://drupal.org/project/currency).
+  $amount_string = number_format($amount, 2, '.', '');
+  $decimal_separator_position = strpos($amount_string, '.');
+  $arguments = array(
+    '!currency_code' => $currency_code,
+    '!units' => substr($amount_string, 0, $decimal_separator_position),
+    '!cents' => substr($amount_string, $decimal_separator_position + 1),
+  );
+  return $currency_code ? t('!currency_code !units.!cents', $arguments) : t('!units.!cents', $arguments);
+}
+
+/**
+ * Form process callback for a payment_method element.
+ *
+ * @see payment_element_info()
+ */
+function payment_form_method_process(array $element, array &$form_state, array &$form) {
+  $form_state['payment_parents'] = $element['#parents'];
+  if (empty($form_state['payment'])) {
+    $form_state['payment'] = $element['#payment'];
+  }
+  $payment = $form_state['payment'];
+
+  $element['#tree'] = TRUE;
+  $pmid_options = array();
+  $pmids = empty($element['#pmids']) ? FALSE : $element['#pmids'];
+  foreach (entity_load('payment_method', $pmids) as $payment_method) {
+    // @todo Do basic validation, e.g. for supported currencies.
+    // Don't show unavailable payment methods.
+    if ($payment_method->controller->name != 'PaymentMethodControllerUnavailable') {
+      // Cast the PMID to a string or the AJAX callback won't work.
+      $pmid_options[(string) $payment_method->pmid] = $payment_method->title_generic;
+    }
+  }
+  $element['pmid'] = array(
+    '#type' => 'select',
+    '#title' => isset($element['#title']) ? $element['#title'] : NULL,
+    '#options' => $pmid_options,
+    '#default_value' => $payment->method ? $payment->method->pmid : NULL,
+    '#empty_value' => 'select',
+    '#required' => $element['#required'],
+    '#ajax' => array(
+      'callback' => 'payment_form_method_controller_settings_ajax_callback',
+      'effect' => 'fade',
+      'event' => 'change',
+      'wrapper' => 'payment-controller-settings',
+    ),
+    // Disable the selector for non-JS pages. This means that if we're
+    // executing an AJAX callback, _triggering_element_name is set and we leave
+    // the element enabled.
+    '#disabled' => !empty($payment->method) && !isset($form_state['input']['_triggering_element_name']),
+    '#attached' => array(
+      'js' => array(drupal_get_path('module', 'payment') . '/js/payment.js'),
+    ),
+    '#id' => 'payment-method-pmid',
+  );
+  $element += payment_form_method_controller_settings($payment->method);
+
+  return $element;
+}
+
+function payment_form_method_validate(array $element, array &$form_state) {
+  $pmid = drupal_array_get_nested_value($form_state['values'], array_merge($element['#parents'], array('pmid')));
+  if ($pmid) {
+    $payment = $form_state['payment'];
+    if (!$payment->method || $payment->method->pmid != $pmid) {
+      $form_state['rebuild'] = TRUE;
+      $payment->method = entity_load_single('payment_method', $pmid);
+    }
+  }
+}
+
+function payment_form_method_change_submit(array $form, array &$form_state) {
+  $pmid = drupal_array_get_nested_value($form_state['values'], array_merge($form_state['payment_parents'], array('pmid')));
+  unset($pmid);
+  $form_state['payment']->method = NULL;
+  $form_state['rebuild'] = TRUE;
+}
+
+/**
+ * Return a payment method controller's form elements to configure a payment.
+ *
+ * @param $payment_method mixed
+ *   Either a PaymentMethod object or NULL.
+ */
+function payment_form_method_controller_settings($payment_method = NULL) {
+  $elements['wrapper_prefix'] = array(
+    '#type' => 'markup',
+    '#markup' => '<div id="payment-controller-settings">',
+  );
+  $elements['controller_settings'] = array();
+  if ($payment_method) {
+    $elements['change'] = array(
+      '#type' => 'submit',
+      '#value' => t('Change payment method'),
+      '#submit' => array('payment_form_method_change_submit'),
+      '#limit_validation_errors' => array(),
+      '#attributes' => array(
+        'class' => array('js-hide')
+      ),
+    );
+    if ($payment_method->controller->payment_form_elements_callback) {
+      $elements['controller_settings'] = call_user_func($payment_method->controller->payment_form_elements_callback, $payment_method);
+    }
+  }
+  $elements['wrapper_suffix'] = array(
+    '#type' => 'markup',
+    '#markup' => '</div>',
+  );
+
+  return $elements;
+}
+
+/**
+ * Return a payment method controller's form elements to configure a payment.
+ */
+function payment_form_method_controller_settings_ajax_callback(array $form, array &$form_state) {
+  $element = $form;
+  foreach ($form_state['payment_parents'] as $parent) {
+    $element = $element[$parent];
+  }
+
+  return $element['controller_settings'] ? $element['controller_settings'] : array();
+}
+
+/**
+ * Menu wildcard loader to load an entity
+ *
+ * @param $id integer
+ *   The entity's ID.
+ * @param $entity_type string
+ *   The type of the entity to load.
+ *
+ * @see entity_load_single()
+ */
+function payment_menu_entity_load($id, $entity_type) {
+  return entity_load_single($entity_type, $id);
+}
+
+/**
+ * Menu access callback: return a user's access to a payment.
+ *
+ * @param $payment Payment
+ *
+ * @return string
+ */
+function payment_access(Payment $payment) {
+  global $user;
+
+  if (user_access('payment.view.all')) {
+    return TRUE;
+  }
+  elseif (user_access('payment.view.own') && $user->uid == $payment->uid) {
+    return TRUE;
+  }
+  return FALSE;
+}
+
+/**
+ * Title callback for menu items.
+ *
+ * @param $payment_method PaymentMethod
+ *
+ * @return string
+ *   The payment method's title.
+ */
+function payment_method_title(PaymentMethod $payment_method) {
+  return $payment_method->title_specific;
+}

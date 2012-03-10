@@ -1,0 +1,10 @@
+name = Basic Payment Method
+description = "A 'dumb' payment method type that always successfully executes payments, but never actually transfers money. It can be useful for <em>collect on delivery</em>, for instance.
+core = 7.x
+dependencies[] = payment
+; Information added by drupal.org packaging script on 2012-02-20
+version = "7.x-1.x-dev"
+core = "7.x"
+project = "payment"
+datestamp = "1329697784"
+
